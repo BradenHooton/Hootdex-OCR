@@ -1,0 +1,9 @@
+/data/
+/data-demo/
+/bin/
+web/node_modules/
+web/dist/
+*.db
+*.db-wal
+*.db-shm
+.env
