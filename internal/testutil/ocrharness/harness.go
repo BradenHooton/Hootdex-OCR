@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/hootyeah/hootdex/internal/adapters/outbound/market"
 	"github.com/hootyeah/hootdex/internal/adapters/outbound/sqlite"
 	"github.com/hootyeah/hootdex/internal/adapters/outbound/vision"
 	"github.com/hootyeah/hootdex/internal/application"
@@ -142,6 +143,7 @@ func Run(ctx context.Context, dataDir string, workers int, logOut io.Writer) (Re
 		Jobs: jobs, Inventory: inventory,
 		Preprocess: application.NewPreprocessService(jobs, vision.NewPreprocessor(log), filepath.Join(dataDir, "processed"), nil, log),
 		Extractor:  application.NewExtractionRouter(vision.NewTesseractExtractor(rec, checklist, log), false, log),
+		Valuer:     application.NewValuationService(market.NewPriceService(log), 0),
 		NewID:      uuid.New, Log: log,
 	}, application.PipelineConfig{Workers: workers})
 	if err := pipe.Drain(ctx); err != nil {

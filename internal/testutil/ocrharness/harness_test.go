@@ -20,7 +20,7 @@ func TestSprint3Gate(t *testing.T) {
 	slots := map[string]bool{}
 	for _, o := range rep.Outcomes {
 		if o.Record != nil {
-			if o.Record.Card.HootScore <= 0 || o.Record.Card.EstimatedRawCondition == "" || o.Record.Card.CornerWearScore == nil {
+			if o.Record.Card.HootScore <= 0 || o.Record.Card.MarketPriceCents <= 0 || o.Record.Card.EstimatedRawCondition == "" || o.Record.Card.CornerWearScore == nil {
 				t.Errorf("%s: valuation/condition not populated: %+v", o.Scenario.Name, o.Record.Card)
 			}
 			slots[o.Record.Location.ID] = true
