@@ -83,9 +83,15 @@ func (r *InventoryRepository) FinalizeCard(ctx context.Context, c *domain.Card) 
 				return fmt.Errorf("allocate storage: %w", err)
 			}
 			c.StorageLocationID = loc.ID
-		} else if _, err := tx.ExecContext(ctx, `UPDATE storage_locations SET occupied_count = occupied_count + 1
-			WHERE id = ? AND occupied_count < capacity`, c.StorageLocationID); err != nil {
-			return fmt.Errorf("occupy %s: %w", c.StorageLocationID, err)
+		} else {
+			res, err := tx.ExecContext(ctx, `UPDATE storage_locations SET occupied_count = occupied_count + 1
+				WHERE id = ? AND occupied_count < capacity`, c.StorageLocationID)
+			if err != nil {
+				return fmt.Errorf("occupy %s: %w", c.StorageLocationID, err)
+			}
+			if n, _ := res.RowsAffected(); n != 1 {
+				return fmt.Errorf("occupy %s: %w (slot full or unknown)", c.StorageLocationID, domain.ErrNoStorageCapacity)
+			}
 		}
 		if c.SKU == "" {
 			sku, err := nextSKUTx(ctx, tx, domain.SKUPrefix(c))
@@ -117,6 +123,11 @@ func (r *InventoryRepository) FinalizeCard(ctx context.Context, c *domain.Card) 
 			c.MarketPriceCents, c.AcquisitionCostCents, c.AskingPriceCents, c.PlayerImpactTier,
 			c.ScarcityMultiplier, c.HootScore, c.InventoryStatus, c.MarketplaceMetaJSON, c.FrontImageURL, nullStr(c.BackImageURL)); err != nil {
 			return fmt.Errorf("insert card: %w", err)
+		}
+		if q := c.PendingPriceQuote; q != nil && q.PriceCents > 0 {
+			if err := insertSnapshot(ctx, tx, c.ID, *q); err != nil {
+				return err
+			}
 		}
 		if c.IngestionJobID != "" {
 			res, err := tx.ExecContext(ctx, `UPDATE ingestion_jobs SET status = 'COMPLETED', error_message = NULL, updated_at = CURRENT_TIMESTAMP
@@ -243,4 +254,57 @@ func (r *InventoryRepository) UpdateValuation(ctx context.Context, c *domain.Car
 		return fmt.Errorf("sqlite.InventoryRepository.UpdateValuation [%s]: %w", c.ID, domain.ErrNotFound)
 	}
 	return nil
+}
+
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+func insertSnapshot(ctx context.Context, x execer, cardID string, q domain.PriceQuote) error {
+	if q.CapturedAt.IsZero() {
+		_, err := x.ExecContext(ctx, `INSERT INTO price_snapshots (inventory_card_id, source, price_cents, listing_url) VALUES (?, ?, ?, ?)`,
+			cardID, q.Source, q.PriceCents, nullStr(q.ListingURL))
+		if err != nil {
+			return fmt.Errorf("price snapshot: %w", err)
+		}
+		return nil
+	}
+	_, err := x.ExecContext(ctx, `INSERT INTO price_snapshots (inventory_card_id, source, price_cents, listing_url, captured_at) VALUES (?, ?, ?, ?, ?)`,
+		cardID, q.Source, q.PriceCents, nullStr(q.ListingURL), q.CapturedAt.UTC().Format("2006-01-02 15:04:05"))
+	if err != nil {
+		return fmt.Errorf("price snapshot: %w", err)
+	}
+	return nil
+}
+
+// AddPriceSnapshot records a market observation for a card.
+func (r *InventoryRepository) AddPriceSnapshot(ctx context.Context, cardID string, q domain.PriceQuote) error {
+	if err := insertSnapshot(ctx, r.db, cardID, q); err != nil {
+		return fmt.Errorf("sqlite.InventoryRepository.AddPriceSnapshot [%s]: %w", cardID, err)
+	}
+	return nil
+}
+
+// ListPriceSnapshots returns a card's price history, newest first.
+func (r *InventoryRepository) ListPriceSnapshots(ctx context.Context, cardID string) ([]domain.PriceQuote, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT source, price_cents, listing_url, captured_at FROM price_snapshots
+		WHERE inventory_card_id = ? ORDER BY captured_at DESC, id DESC`, cardID)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite.InventoryRepository.ListPriceSnapshots [%s]: %w", cardID, err)
+	}
+	defer rows.Close()
+	var out []domain.PriceQuote
+	for rows.Next() {
+		var q domain.PriceQuote
+		var url sql.NullString
+		if err := rows.Scan(&q.Source, &q.PriceCents, &url, &q.CapturedAt); err != nil {
+			return nil, fmt.Errorf("sqlite.InventoryRepository.ListPriceSnapshots [%s]: %w", cardID, err)
+		}
+		q.ListingURL = url.String
+		out = append(out, q)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlite.InventoryRepository.ListPriceSnapshots [%s]: %w", cardID, err)
+	}
+	return out, nil
 }

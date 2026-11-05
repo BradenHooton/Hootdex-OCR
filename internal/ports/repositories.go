@@ -41,6 +41,8 @@ type InventoryRepository interface {
 	Get(ctx context.Context, id string) (*domain.InventoryRecord, error)
 	List(ctx context.Context, filter domain.InventoryFilter) ([]domain.InventoryRecord, error)
 	UpdateValuation(ctx context.Context, card *domain.Card) error
+	AddPriceSnapshot(ctx context.Context, cardID string, q domain.PriceQuote) error
+	ListPriceSnapshots(ctx context.Context, cardID string) ([]domain.PriceQuote, error)
 }
 
 // ChecklistRepository is the ground-truth master checklist with fuzzy matching.

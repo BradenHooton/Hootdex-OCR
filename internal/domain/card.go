@@ -215,6 +215,10 @@ type Card struct {
 	BackImageURL        string
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
+
+	// PendingPriceQuote is transient (not a column): when set, the repository records it in
+	// price_snapshots in the same transaction that inserts the card.
+	PendingPriceQuote *PriceQuote
 }
 
 // NewCardFromPayload builds an inventory card from an extraction payload,

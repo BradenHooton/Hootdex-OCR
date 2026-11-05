@@ -402,3 +402,48 @@ func TestInventoryFinalizeRejectsInvalidCard(t *testing.T) {
 		t.Fatalf("expected invalid, got %v", err)
 	}
 }
+
+func TestFinalizeCardRecordsPriceSnapshot(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	seedLocations(t, NewStorageRepository(db), 1, 5)
+	inv := NewInventoryRepository(db)
+	c := sampleCard("")
+	c.PendingPriceQuote = &domain.PriceQuote{PriceCents: 12500, Source: domain.PricePriceCharting, ListingURL: "https://example.test/p/1"}
+	if err := inv.FinalizeCard(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	if err := inv.AddPriceSnapshot(ctx, c.ID, domain.PriceQuote{PriceCents: 13000, Source: domain.PriceManual}); err != nil {
+		t.Fatal(err)
+	}
+	snaps, err := inv.ListPriceSnapshots(ctx, c.ID)
+	if err != nil || len(snaps) != 2 {
+		t.Fatalf("snapshots %v %v", snaps, err)
+	}
+	if err := inv.AddPriceSnapshot(ctx, c.ID, domain.PriceQuote{PriceCents: 1, Source: "BOGUS"}); err == nil {
+		t.Fatal("CHECK constraint on source must reject unknown sources")
+	}
+	if err := inv.AddPriceSnapshot(ctx, "missing-card", domain.PriceQuote{PriceCents: 1, Source: domain.PriceManual}); err == nil {
+		t.Fatal("foreign key must reject unknown card")
+	}
+}
+
+func TestFinalizeCardExplicitSlotRespectsCapacity(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	locs := seedLocations(t, NewStorageRepository(db), 1, 1)
+	inv := NewInventoryRepository(db)
+	a, b := sampleCard(""), sampleCard("")
+	a.StorageLocationID, b.StorageLocationID = locs[0].ID, locs[0].ID
+	if err := inv.FinalizeCard(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	if err := inv.FinalizeCard(ctx, b); !errors.Is(err, domain.ErrNoStorageCapacity) {
+		t.Fatalf("expected full slot, got %v", err)
+	}
+	c := sampleCard("")
+	c.StorageLocationID = "NOPE"
+	if err := inv.FinalizeCard(ctx, c); !errors.Is(err, domain.ErrNoStorageCapacity) {
+		t.Fatalf("expected unknown slot error, got %v", err)
+	}
+}
